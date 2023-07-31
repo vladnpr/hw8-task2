@@ -23,19 +23,23 @@ func (r *Round) Start(roundChan chan *Round) {
 }
 
 type Player struct {
-	Name string
+	Name       string
+	answerChan chan Answer
+	Round      *Round
+	ctx        context.Context
 }
 
-func (p *Player) generateAnswer(answerChan chan<- Answer, round *Round) {
+func (p *Player) generateAnswer() {
+	defer p.ctx.Done()
 	answerNum := rand.Intn(RandLimit)
 	fmt.Println(answerNum)
 	answer := Answer{
 		PlayerName:   p.Name,
 		PlayerAnswer: answerNum,
-		RightNumber:  round.RightNumber,
+		RightNumber:  p.Round.RightNumber,
 	}
 
-	answerChan <- answer
+	p.answerChan <- answer
 }
 
 type Answer struct {
@@ -52,7 +56,7 @@ func main() {
 
 	defer cancel()
 
-	// Start the generator goroutine
+	//Start the generator goroutine
 	go func() {
 		for {
 			select {
@@ -66,24 +70,23 @@ func main() {
 		}
 	}()
 
-	for i := 1; i <= numPlayers; i++ {
-		fmt.Println("Player run ", i)
-		player := &Player{Name: fmt.Sprintf("Player-%d", i)}
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case round := <-roundChan:
-					player.generateAnswer(answerChan, round)
-				}
+	select {
+	case round := <-roundChan:
+		for i := 1; i <= numPlayers; i++ {
+			fmt.Println("Player run ", i)
+			player := &Player{
+				Name:       fmt.Sprintf("Player-%d", i),
+				answerChan: answerChan,
+				Round:      round,
+				ctx:        ctx,
 			}
-		}()
+
+			go player.generateAnswer()
+		}
 	}
 
-	// Counter goroutine
 	go func() {
-		correctAnswers := 0
+		var correctAnswers int
 		for {
 			select {
 			case <-ctx.Done():
@@ -100,11 +103,14 @@ func main() {
 					fmt.Println("\nAll players answered correctly!")
 					cancel()
 				}
+
+				if correctAnswers == 0 {
+					fmt.Printf("\nRight answer is %d", answer.RightNumber)
+				}
 			}
 		}
 	}()
 
-	// Wait for the game to end
 	<-ctx.Done()
 	fmt.Println("\nGame Over!")
 }
